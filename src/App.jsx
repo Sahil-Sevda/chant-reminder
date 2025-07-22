@@ -13,6 +13,7 @@ const STORAGE_KEY_SILENCE = "chantSilenceMs";
 const DEFAULT_SILENCE_MS = 3000; // 3s default gap
 const MIN_SILENCE_SEC = 1;
 const MAX_SILENCE_SEC = 10;
+const MOBILE_BREAK = 600; // px
 
 // Soft beep tone config
 const BEEP_FREQ = 440;
@@ -48,6 +49,8 @@ const texts = {
     noAudio: "No audio captured. Please record again.",
     mantraSaved: (m) => `Mantra saved: "${m}"`,
     liveChant: "Live Chant",
+    showLive: "Show Live Chant",
+    hideLive: "Hide Live Chant",
   },
   hi: {
     title: "जप याद दिलाने वाला",
@@ -71,6 +74,8 @@ const texts = {
     noAudio: "कोई ऑडियो कैप्चर नहीं हुआ। फिर से रिकॉर्ड करें।",
     mantraSaved: (m) => `मंत्र सेव हुआ: "${m}"`,
     liveChant: "लाइव जप",
+    showLive: "लाइव जप दिखाएं",
+    hideLive: "लाइव जप छिपाएं",
   },
 };
 
@@ -93,6 +98,14 @@ export default function App() {
   const [liveFinal, setLiveFinal] = useState("");
   const [liveInterim, setLiveInterim] = useState("");
 
+  // Responsive
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined"
+      ? window.matchMedia(`(max-width:${MOBILE_BREAK}px)`).matches
+      : false
+  );
+  const [showLiveMobile, setShowLiveMobile] = useState(false);
+
   /* ---------- Refs ---------- */
   const recordRecRef = useRef(null);
   const recordFinalRef = useRef([]);
@@ -104,6 +117,18 @@ export default function App() {
   const chantTickerRef = useRef(null);           // chantTime ticker
   const gapPollRef = useRef(null);               // silence poll
   const audioCtxRef = useRef(null);
+
+  /* ---------- Media query listener ---------- */
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width:${MOBILE_BREAK}px)`);
+    const handler = (e) => setIsMobile(e.matches);
+    if (mq.addEventListener) mq.addEventListener("change", handler);
+    else mq.addListener(handler); // Safari fallback
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", handler);
+      else mq.removeListener(handler);
+    };
+  }, []);
 
   /* ---------- Load persisted values ---------- */
   useEffect(() => {
@@ -324,7 +349,6 @@ export default function App() {
         if (matched) {
           // Heard valid mantra *token* (partial OK)
           lastHeardRef.current = Date.now();
-          // DO NOT reset timer on every chant — user wants it to grow until beep
           mismatchBeepAtRef.current = 0;
         } else if (r.isFinal) {
           // Wrong chant? Only beep if clearly speech, not noise
@@ -418,50 +442,88 @@ export default function App() {
 
   return (
     <div style={styles.page}>
-      {/* LEFT: Language toggle + Live Chant Panel */}
-      <div style={styles.leftStack}>
-        <button
-          style={styles.langButton}
-          onClick={toggleLanguage}
-          title={language === "en" ? "हिंदी में बदलें" : "Switch to English"}
-        >
-          {language === "en" ? "EN" : "हि"}
-        </button>
-
-        <div style={styles.leftPanel}>
-          <h3 style={styles.leftPanelTitle}>{t.liveChant}</h3>
-          <div style={styles.leftPanelBox}>
-            {livePanelText ? livePanelText : <i>Listening...</i>}
-          </div>
+      {/* Responsive top bar (mobile only) */}
+      {isMobile && (
+        <div style={styles.topBar}>
+          <button
+            style={styles.topBarBtn}
+            onClick={toggleLanguage}
+            title={language === "en" ? "हिंदी में बदलें" : "Switch to English"}
+          >
+            {language === "en" ? "EN" : "हि"}
+          </button>
+          <button
+            style={styles.topBarBtn}
+            title={t.troubleshooting}
+            onClick={() => setShowIssues((s) => !s)}
+          >
+            ⚠️
+          </button>
+          <a
+            href="https://www.youtube.com/@BhajanMarg"
+            title="Please check if you want to change your life"
+            style={{ ...styles.topBarBtn, textDecoration: "none", lineHeight: "28px" }}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            🎵
+          </a>
+          <a
+            href="mailto:mesahilsevda@gmail.com"
+            style={{ ...styles.topBarBtn, textDecoration: "none", lineHeight: "28px" }}
+            title="Email me"
+          >
+            ✉️
+          </a>
         </div>
-      </div>
+      )}
 
-      {/* RIGHT: Troubleshoot / Bhajan / Email */}
-      <div style={styles.sideIcons}>
-        <button
-          style={styles.iconButton}
-          title={t.troubleshooting}
-          onClick={() => setShowIssues((s) => !s)}
-        >
-          ⚠️
-        </button>
-        <a
-          href="https://www.youtube.com/@BhajanMarg"
-          title="Please check if you want to change your life"
-          style={styles.iconButton}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          🎵
-        </a>
-        <a
-          href="mailto:mesahilsevda@gmail.com"
-          style={styles.iconButton}
-          title="Email me"
-        >
-          ✉️
-        </a>
-      </div>
+      {/* Desktop: language + live panel left, icons right */}
+      {!isMobile && (
+        <>
+          <div style={styles.leftStack}>
+            <button
+              style={styles.langButton}
+              onClick={toggleLanguage}
+              title={language === "en" ? "हिंदी में बदलें" : "Switch to English"}
+            >
+              {language === "en" ? "EN" : "हि"}
+            </button>
+            <div style={styles.leftPanel}>
+              <h3 style={styles.leftPanelTitle}>{t.liveChant}</h3>
+              <div style={styles.leftPanelBox}>
+                {livePanelText ? livePanelText : <i>Listening...</i>}
+              </div>
+            </div>
+          </div>
+
+          <div style={styles.sideIcons}>
+            <button
+              style={styles.iconButton}
+              title={t.troubleshooting}
+              onClick={() => setShowIssues((s) => !s)}
+            >
+              ⚠️
+            </button>
+            <a
+              href="https://www.youtube.com/@BhajanMarg"
+              title="Please check if you want to change your life"
+              style={styles.iconButton}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              🎵
+            </a>
+            <a
+              href="mailto:mesahilsevda@gmail.com"
+              style={styles.iconButton}
+              title="Email me"
+            >
+              ✉️
+            </a>
+          </div>
+        </>
+      )}
 
       {/* Main Card */}
       <div style={styles.cardOuter}>
@@ -558,6 +620,26 @@ export default function App() {
                 </small>
               )}
             </div>
+
+            {/* Mobile Live Panel Toggle */}
+            {isMobile && (
+              <div style={{ marginTop: 24 }}>
+                <button
+                  style={styles.secondaryBtn}
+                  onClick={() => setShowLiveMobile((v) => !v)}
+                >
+                  {showLiveMobile ? t.hideLive : t.showLive}
+                </button>
+                {showLiveMobile && (
+                  <div style={styles.mobileLiveBox}>
+                    <h3 style={styles.mobileLiveTitle}>{t.liveChant}</h3>
+                    <div style={styles.mobileLiveContent}>
+                      {livePanelText ? livePanelText : <i>Listening...</i>}
+                    </div>
+                  </div>
+                )}
+            </div>
+            )}
           </div>
         )}
 
@@ -632,7 +714,6 @@ function matchLoose(txt, md) {
   return false;
 }
 
-
 /**
  * Should we beep immediately for a "wrong chant"?
  * We only do this when:
@@ -661,7 +742,7 @@ function trimTranscript(str, max = 2000) {
 }
 
 /* ===========================================================
-   Styles (Premium Dark)
+   Styles (Premium Dark + Responsive)
    =========================================================== */
 const styles = {
   page: {
@@ -673,11 +754,40 @@ const styles = {
     justifyContent: "center",
     alignItems: "flex-start",
     padding: "clamp(16px,4vw,48px)",
+    paddingTop: "calc(env(safe-area-inset-top, 0px) + 72px)", // space for mobile top bar
     boxSizing: "border-box",
     fontFamily: "Inter, Arial, sans-serif",
   },
 
-  /* Left stack: language button + live panel */
+  /* Mobile top bar */
+  topBar: {
+    position: "fixed",
+    top: "env(safe-area-inset-top, 0px)",
+    left: 0,
+    right: 0,
+    height: 48,
+    padding: "0 16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 12,
+    background: "rgba(0,0,0,0.6)",
+    backdropFilter: "blur(8px)",
+    zIndex: 2000,
+  },
+  topBarBtn: {
+    minWidth: 32,
+    height: 32,
+    padding: "0 8px",
+    borderRadius: 8,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(255,255,255,0.1)",
+    color: "#fff",
+    fontSize: 16,
+    cursor: "pointer",
+  },
+
+  /* Left stack (desktop only) */
   leftStack: {
     position: "fixed",
     top: 20,
@@ -730,7 +840,7 @@ const styles = {
     lineHeight: 1.3,
   },
 
-  /* Right icons */
+  /* Right icons (desktop only) */
   sideIcons: {
     position: "fixed",
     top: 20,
@@ -815,6 +925,39 @@ const styles = {
     cursor: "pointer",
     transition: "transform 0.08s, box-shadow 0.1s",
     boxShadow: "0 0 12px rgba(236,72,153,0.4)",
+  },
+  secondaryBtn: {
+    marginTop: 10,
+    padding: "10px 20px",
+    width: "100%",
+    maxWidth: 280,
+    border: "1px solid rgba(255,255,255,0.2)",
+    borderRadius: 12,
+    background: "rgba(255,255,255,0.1)",
+    color: "#fff",
+    fontWeight: 600,
+    fontSize: "clamp(0.95rem,4vw,1.05rem)",
+    cursor: "pointer",
+  },
+  mobileLiveBox: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    background: "rgba(255,255,255,0.08)",
+    textAlign: "left",
+    maxHeight: "40vh",
+    overflowY: "auto",
+  },
+  mobileLiveTitle: {
+    margin: "0 0 8px 0",
+    fontWeight: 700,
+    fontSize: "1rem",
+  },
+  mobileLiveContent: {
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    lineHeight: 1.3,
+    fontSize: "0.95rem",
   },
   stopBtn: {
     marginTop: 10,
