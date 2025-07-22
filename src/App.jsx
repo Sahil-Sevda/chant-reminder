@@ -23,6 +23,9 @@ const BEEP_DURATION_MS = 1500;
 // Wrong‑chant immediate beep cooldown (ms)
 const MISMATCH_COOLDOWN_MS = 1500;
 
+// Debug flag (set true to see console logs)
+const DEBUG = false;
+
 /* ===========================================================
    UI Text (EN / HI)
    =========================================================== */
@@ -112,7 +115,7 @@ export default function App() {
   const recordInterimRef = useRef("");
 
   const listenRecRef = useRef(null);
-  const lastHeardRef = useRef(Date.now());       // last mantra token heard
+  const lastHeardRef = useRef(Date.now());       // last mantra token heard OR beep cooldown target
   const mismatchBeepAtRef = useRef(0);           // last wrong-chant beep ts
   const chantTickerRef = useRef(null);           // chantTime ticker
   const gapPollRef = useRef(null);               // silence poll
@@ -180,6 +183,7 @@ export default function App() {
 
   const beep = () => {
     const ctx = ensureAudioCtx();
+    if (ctx.state === "suspended") ctx.resume(); // mobile fix
     const start = ctx.currentTime;
     const end = start + BEEP_DURATION_MS / 1000;
 
@@ -220,6 +224,7 @@ export default function App() {
     rec.continuous = true;
 
     rec.onresult = (e) => {
+      if (DEBUG) console.log("[Record] results:", e.results);
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
         const txt = r[0].transcript.trim();
@@ -233,7 +238,9 @@ export default function App() {
       setRecordPreview(buildRecordedText());
     };
 
-    rec.onerror = (e) => console.log("Record error:", e);
+    rec.onerror = (e) => {
+      if (DEBUG) console.log("[Record] error:", e);
+    };
     rec.onend = () => {
       if (isRecording) {
         try { rec.start(); } catch {}
@@ -297,7 +304,7 @@ export default function App() {
     stopListening(); // clear prior
 
     setIsListening(true);
-    resetChantTimer();                // start at 0
+    resetChantTimer(); // start at 0
     lastHeardRef.current = Date.now();
     mismatchBeepAtRef.current = 0;
     setLiveFinal("");
@@ -308,14 +315,16 @@ export default function App() {
       setChantTime((s) => s + 1);
     }, 1000);
 
-    // silence poll -> REPEATING reminders
+    // silence poll -> repeating reminders w/ cooldown
     gapPollRef.current = setInterval(() => {
-      const gap = Date.now() - lastHeardRef.current;
+      const now = Date.now();
+      const gap = now - lastHeardRef.current;
       if (gap >= silenceMs) {
+        if (DEBUG) console.log("[Silence] gap hit:", gap);
         beep();
         resetChantTimer();
-        // restart gap window so it repeats
-        lastHeardRef.current = Date.now();
+        // cooldown: push lastHeard forward so we don't instantly beep again
+        lastHeardRef.current = now + silenceMs;
       }
     }, 250);
 
@@ -326,6 +335,7 @@ export default function App() {
     rec.continuous = true;
 
     rec.onresult = (e) => {
+      if (DEBUG) console.log("[Listen] results:", e.results);
       let interimAgg = "";
 
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -335,8 +345,8 @@ export default function App() {
         const txt = rawTxt.toLowerCase();
         const conf = typeof alt.confidence === "number" ? alt.confidence : 1;
 
+        // update live transcript
         if (r.isFinal) {
-          // append to final transcript feed
           setLiveFinal((prev) => trimTranscript(prev + " " + rawTxt));
         } else {
           interimAgg += rawTxt + " ";
@@ -355,22 +365,24 @@ export default function App() {
           if (shouldMismatchBeep(txt, conf, mantraData)) {
             const now = Date.now();
             if (now - mismatchBeepAtRef.current > MISMATCH_COOLDOWN_MS) {
+              if (DEBUG) console.log("[Mismatch] beep on:", rawTxt, conf);
               beep();
               resetChantTimer();
               mismatchBeepAtRef.current = now;
-              // treat as reminder: restart silence countdown
-              lastHeardRef.current = now;
+              // cooldown
+              lastHeardRef.current = now + silenceMs;
             }
           }
         }
       }
 
       // update interim panel display
-      if (interimAgg) setLiveInterim(interimAgg.trim());
-      else setLiveInterim("");
+      setLiveInterim(interimAgg.trim());
     };
 
-    rec.onerror = (e) => console.log("Listen error:", e);
+    rec.onerror = (e) => {
+      if (DEBUG) console.log("[Listen] error:", e);
+    };
     rec.onend = () => {
       if (isListening) {
         try { rec.start(); } catch {}
@@ -610,15 +622,9 @@ export default function App() {
 
             {/* Reminder note */}
             <div style={styles.noteBox}>
-              {language === "en" ? (
-                <small>
-                  {t.note1} {Math.round(silenceMs / 1000)} {t.note2}
-                </small>
-              ) : (
-                <small>
-                  {t.note1} {Math.round(silenceMs / 1000)} {t.note2}
-                </small>
-              )}
+              <small>
+                {t.note1} {Math.round(silenceMs / 1000)} {t.note2}
+              </small>
             </div>
 
             {/* Mobile Live Panel Toggle */}
@@ -638,7 +644,7 @@ export default function App() {
                     </div>
                   </div>
                 )}
-            </div>
+              </div>
             )}
           </div>
         )}
@@ -681,55 +687,34 @@ function canonicalize(str) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z\u0900-\u097F]/g, "") // keep Devanagari too
-    .replace(/a+/g, "a")
-    .replace(/aa+/g, "a")
-    .replace(/i+/g, "i")
-    .replace(/ee+/g, "i")
-    .replace(/u+/g, "u")
-    .replace(/oo+/g, "u");
+    .replace(/[^a-z\u0900-\u097F]/g, ""); // keep latin + Devanagari; strip spaces/punct
 }
 
 /**
  * Loose match:
- *  - If ANY token candidate occurs in transcript (raw or canonicalized), return true.
+ *  - If ANY token candidate occurs in transcript (canonicalized), return true.
  *  - Accepts partial chanting like "ram ram" when mantra is "sita ram".
- *  - Rejects unrelated speech (e.g., "radha") unless recorded mantra includes it.
  */
 function matchLoose(txt, md) {
   if (!md || !md.tokenSet || md.tokenSet.size === 0) return false;
-
-  // Normalize both the incoming text and mantra tokens
-  const input = canonicalize(txt.toLowerCase().replace(/\s+/g, ""));
-  const inputWithSpace = canonicalize(txt.toLowerCase());
-
+  const cInput = canonicalize(txt);
   for (const tok of md.tokenSet) {
-    const canonicalTok = canonicalize(tok.replace(/\s+/g, ""));
-    // Check both merged and spaced versions
-    if (input.includes(canonicalTok) || inputWithSpace.includes(tok)) {
-      return true;
-    }
+    if (!tok) continue;
+    if (cInput.includes(canonicalize(tok))) return true;
   }
-
   return false;
 }
 
 /**
  * Should we beep immediately for a "wrong chant"?
- * We only do this when:
- *  - The phrase does NOT matchLoose()
- *  - Confidence is reasonable OR the phrase length looks like real speech
- *  - Ignore tiny noises ("uh", background clicks)
+ *  - only if NOT matchLoose()
+ *  - ignore super short / low confidence garbage
  */
 function shouldMismatchBeep(txt, conf, md) {
   if (matchLoose(txt, md)) return false;
-
   const letters = txt.replace(/[^a-z\u0900-\u097F]/g, "");
-  if (letters.length < 3 && conf < 0.5) return false; // too small/noisy
-
-  // allow beep when either confidence decent OR we’ve got a meaningful chunk
+  if (letters.length < 3 && conf < 0.5) return false;
   if (conf >= 0.25 || letters.length >= 4) return true;
-
   return false;
 }
 
@@ -737,8 +722,9 @@ function shouldMismatchBeep(txt, conf, md) {
  * Keep transcript from growing forever: trim to last ~2000 chars.
  */
 function trimTranscript(str, max = 2000) {
-  if (str.length <= max) return str.trim();
-  return str.slice(-max).trimStart();
+  const out = str.replace(/\s+/g, " ").trim();
+  if (out.length <= max) return out;
+  return out.slice(-max).trimStart();
 }
 
 /* ===========================================================
